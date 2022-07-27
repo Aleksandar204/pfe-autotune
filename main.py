@@ -6,8 +6,11 @@ from PySide2.QtCore import QFile
 import numpy as np
 from scipy.io.wavfile import read
 from scipy.io.wavfile import write
+from scipy.fft import *
 import sounddevice as sd
 
+#Debug imports
+import matplotlib.pyplot as plt
 
 class MainWindow():
     fileName = ""
@@ -15,7 +18,8 @@ class MainWindow():
     stream = None
     fs = 0
     x = None
-    audiosamples = []
+
+    baseFreqs = []
 
     # Class init
     def __init__(self):
@@ -51,56 +55,60 @@ class MainWindow():
             sd.stop()
         else:
             self.win.pushButton.setText("Pause")
-            self.progressbar = QProgressDialog("Joining audio samples...", "ok", 0, len(self.audiosamples))
-            self.progressbar.setMinimumDuration(500)
-            self.progressbar.setWindowTitle("Joining audio samples...")
-            self.joinSamples()
             
             sd.play(self.x,self.fs)
-            self.progressbar.hide()
-            self.progressbar.reset()
     
     def openFile(self):
         self.closeFile()
-        self.playing = True
-        self.play()
+        
         self.fileName = QFileDialog.getOpenFileName(None,"Open Image", "./", "Audio Files (*.wav)")[0]
         self.fs,self.x = read(self.fileName)
+
+        startpoint = 0
+        self.window = self.fs
+        xf = rfftfreq(len(self.x[startpoint:startpoint+self.window]), 1/self.fs)
+        self.baseFreqs = []
+
         cnt = 0
-        temp = []
-        for i in range(len(self.x)):
-            temp.append(self.x[i])
-            if(cnt == 9999):
-                temp = np.array(temp)
-                cnt = 0
-                self.audiosamples.append(temp)
-                temp = []
+        while startpoint < len(self.x):
+            sig = self.x[startpoint:startpoint+self.window]
+            yf = rfft(sig)
+            self.baseFreqs.append(self.calculatePitch(rfft(np.abs(yf))))
+            self.changePitch(cnt,100)
             cnt += 1
-        if len(self.x) % 10000 != 0:
-            temp = np.array(temp)
-            cnt = 0
-            self.audiosamples.append(temp)
-            temp = []
+            startpoint += self.window
+
+
 
     def closeFile(self):
         self.fileName = ""
         self.fs = 0
         self.x = None
         self.audiosamples = []
+        self.playing = True
+        self.play()
 
     def exportFile(self):
         write("output.wav",self.fs,self.x)
 
+    def changePitch(self,i,val):
+        freqs = []
+        fourier = rfft(self.x[i*self.window:(i+1)*self.window])
+        xf = rfftfreq(self.window, 1/self.fs)
 
-    # Helper audio functions
-    def joinSamples(self):
-        xt = self.x # Ove dve linije koda su obazevne da bi kvalitet audia bio bolji od youtube earrape-a
-        xt = xt[len(xt):] # xt je temporary promenljiva koju postavim na originalan audio, pa je onda ispraznim i popunim promenjenim audio sampleovima
-        for i in range(len(self.audiosamples)):
-            self.progressbar.setValue(i)
-            xt = np.concatenate((xt,self.audiosamples[i]),axis=None)
-        print(np.array_equal(self.x,xt))
-        self.x = xt
+        res = np.roll(fourier,val)
+        if val > 0:
+            res[0:val*10] = 0
+        else:
+            for i in range(val*10):
+                res[(len(res)-1)-i] = 0
+
+        self.x[i*self.window:(i+1)*self.window] = irfft(res)
+        #np.append(irfft(res),0)
+
+    def calculatePitch(self,arr):
+        return 0
+
 
 # Main function
 if __name__ == "__main__":

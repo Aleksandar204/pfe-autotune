@@ -7,6 +7,7 @@ import numpy as np
 from scipy.io.wavfile import read
 from scipy.io.wavfile import write
 from scipy.fft import *
+from scipy.signal import stft, hanning
 import sounddevice as sd
 
 #Debug imports
@@ -56,7 +57,7 @@ class MainWindow():
         else:
             self.win.pushButton.setText("Pause")
             
-            sd.play(self.x,self.fs)
+            sd.play(self.x,self.fs*2)
     
     def openFile(self):
         self.closeFile()
@@ -65,18 +66,19 @@ class MainWindow():
         self.fs,self.x = read(self.fileName)
 
         startpoint = 0
-        self.window = int(self.fs/100)
-        xf = rfftfreq(len(self.x[startpoint:startpoint+self.window]), 1/self.fs)
+        window = int(self.fs/100)
+        xf = rfftfreq(len(self.x[startpoint:startpoint+window]), 1/self.fs)
         self.baseFreqs = []
 
         cnt = 0
-        while startpoint < len(self.x):
-            sig = self.x[startpoint:startpoint+self.window]
+        while startpoint < len(self.x): #Racunanje fft fft-a za nalazenje base pitch-a
+            sig = self.x[startpoint:startpoint+window]
             yf = rfft(sig)
             self.baseFreqs.append(self.calculatePitch(rfft(np.abs(yf))))
-            self.changePitch(cnt,2**(3.0/12))
             cnt += 1
-            startpoint += self.window
+            startpoint += window
+
+        self.changePitch(0,4096*500,2**(12.0/12))
 
 
 
@@ -91,16 +93,25 @@ class MainWindow():
     def exportFile(self):
         write("output.wav",self.fs,self.x)
 
-    def changePitch(self,i,val):
-        freqs = []
-        fourier = rfft(self.x[i*self.window:(i+1)*self.window])
-        xf = rfftfreq(self.window, 1/self.fs)
-        res = np.zeros(len(fourier))
-        for k in range(min(int(len(fourier)/val),len(fourier))):
-            res[int(k*val)] = fourier[k]
+    def changePitch(self,startpoint,endpoint,val):
+        signal = self.x[startpoint:endpoint]
+        chunk = 4096
+        overlap = 0.75
+        hopin = int(chunk*(1-overlap))
+        hopout = int(hopin*val)
+        
+        window = hanning(chunk)
+        F = []
+        for i in range(0,endpoint-chunk,hopin):
+            F.append(rfft(window*signal[i:i+chunk]))
 
-        self.x[i*self.window:(i+1)*self.window] = irfft(res)
-        #np.append(irfft(res),0)
+        cnt = 0
+        signal = np.zeros(len(signal))
+        for i in range(0,endpoint-chunk,hopout):
+            signal[i:i+chunk] += window*irfft(F[cnt])
+            cnt +=1
+
+        self.x[startpoint:endpoint] = signal
 
     def calculatePitch(self,arr):
         return 0

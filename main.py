@@ -65,7 +65,7 @@ class MainWindow():
         self.fs,self.x = read(self.fileName)
 
         startpoint = 0
-        self.window = self.fs
+        self.window = int(self.fs/100)
         xf = rfftfreq(len(self.x[startpoint:startpoint+self.window]), 1/self.fs)
         self.baseFreqs = []
 
@@ -74,7 +74,7 @@ class MainWindow():
             sig = self.x[startpoint:startpoint+self.window]
             yf = rfft(sig)
             self.baseFreqs.append(self.calculatePitch(rfft(np.abs(yf))))
-            self.changePitch(cnt,100)
+            self.changePitch(cnt,2**(3.0/12))
             cnt += 1
             startpoint += self.window
 
@@ -95,13 +95,9 @@ class MainWindow():
         freqs = []
         fourier = rfft(self.x[i*self.window:(i+1)*self.window])
         xf = rfftfreq(self.window, 1/self.fs)
-
-        res = np.roll(fourier,val)
-        if val > 0:
-            res[0:val*10] = 0
-        else:
-            for i in range(val*10):
-                res[(len(res)-1)-i] = 0
+        res = np.zeros(len(fourier))
+        for k in range(min(int(len(fourier)/val),len(fourier))):
+            res[int(k*val)] = fourier[k]
 
         self.x[i*self.window:(i+1)*self.window] = irfft(res)
         #np.append(irfft(res),0)

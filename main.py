@@ -7,7 +7,7 @@ import numpy as np
 from scipy.io.wavfile import read
 from scipy.io.wavfile import write
 from scipy.fft import *
-from scipy.signal import stft, hanning
+from scipy.signal import stft, hanning, resample
 import sounddevice as sd
 
 #Debug imports
@@ -57,7 +57,7 @@ class MainWindow():
         else:
             self.win.pushButton.setText("Pause")
             
-            sd.play(self.x,self.fs*2)
+            sd.play(self.x,self.fs)
     
     def openFile(self):
         self.closeFile()
@@ -78,8 +78,8 @@ class MainWindow():
             cnt += 1
             startpoint += window
 
-        self.changePitch(0,4096*500,2**(12.0/12))
-
+        for i in range(0,200,2):
+            self.changePitch(4096*i, 4096*(i+2), 2**(i/200))
 
 
     def closeFile(self):
@@ -95,23 +95,24 @@ class MainWindow():
 
     def changePitch(self,startpoint,endpoint,val):
         signal = self.x[startpoint:endpoint]
-        chunk = 4096
-        overlap = 0.75
+        chunk = 512
+        overlap = 0.8
         hopin = int(chunk*(1-overlap))
         hopout = int(hopin*val)
         
         window = hanning(chunk)
         F = []
-        for i in range(0,endpoint-chunk,hopin):
+        for i in range(0,(endpoint-startpoint)-chunk,hopin):
             F.append(rfft(window*signal[i:i+chunk]))
 
         cnt = 0
-        signal = np.zeros(len(signal))
-        for i in range(0,endpoint-chunk,hopout):
+        signal = np.zeros(len(F)*hopout)
+        for i in range(0,len(signal)-chunk,hopout):
             signal[i:i+chunk] += window*irfft(F[cnt])
             cnt +=1
-
-        self.x[startpoint:endpoint] = signal
+        #print(len(signal))
+        resampled = resample(signal, endpoint-startpoint)
+        self.x[startpoint:endpoint] = resampled
 
     def calculatePitch(self,arr):
         return 0

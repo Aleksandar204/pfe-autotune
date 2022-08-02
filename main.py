@@ -132,10 +132,24 @@ class MainWindow():
         winSize = 8820
         bounds = [20,2000]
 
+        self.xf = self.x.astype(np.float64)
+        for i in tqdm(range(len(self.xf) // (winSize + 2))):
+            self.basePitch.append(
+                augmented_detect_pitch_CMNDF(
+                    self.xf,
+                    winSize,
+                    i * winSize,
+                    self.fs,
+                    bounds
+                )
+            )
+        self.basePitch = np.array(self.basePitch) / 1.05
+        plt.plot(range(len(self.basePitch)),self.basePitch)
+        plt.show()
 
         for i in range(2,10,2):
-            self.changePitch(i*4410*10,(i+2)*4410*10,2**(i/12))
-
+            self.changePitch(i*4410*10,(i+2)*4410*10,2**(i/12)
+        self.basePitch = []
         self.xf = self.x.astype(np.float64)
         for i in tqdm(range(len(self.xf) // (winSize + 2))):
             self.basePitch.append(
@@ -166,7 +180,7 @@ class MainWindow():
         write("output.wav",self.fs,self.x)
 
     def changePitch(self,startpoint,endpoint,val):
-        padding = 0
+        padding = 1000
         # print((startpoint,endpoint))
         signal = self.x[startpoint-padding:endpoint+padding]
         chunk = 4410
@@ -174,7 +188,7 @@ class MainWindow():
         hopin = int(chunk*(1-overlap))
         hopout = int(hopin*val)
         
-        window = windows.hann(chunk+2*padding)
+        window = windows.hann(chunk)
         F = []
         for i in range(0,len(signal)-chunk,hopin):
             F.append(fft(window*signal[i:i+chunk])/np.sqrt(((float(chunk)/float(hopin))/2.0)))

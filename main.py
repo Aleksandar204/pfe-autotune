@@ -10,6 +10,7 @@ from scipy.io.wavfile import write
 from scipy.fft import *
 from scipy.signal import stft, resample, savgol_filter,windows
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 def complex_polarToCartesian(r, theta):
     return r * np.exp(theta*1j)
@@ -17,7 +18,40 @@ def complex_polarToCartesian(r, theta):
 def complex_cartesianToPolar(x):
     return (np.abs(x), np.angle(x))
 
-class PhaseVocoder(object): #Preuzeto od https://github.com/cwoodall/
+
+def autocorrel(f, W, t, lag):    
+    return np.sum(
+        f[t : t + W] *
+        f[lag + t : lag + t + W]
+    )
+
+def df(f, W, t, lag):
+    return autocorrel(f, W, t, 0)+ autocorrel(f, W, t + lag, 0)- (2 * autocorrel(f, W, t, lag))
+
+def cmndf(f, W, t, lag_max):
+    sum = 0
+    vals = []
+    for lag in range(0, lag_max):
+        if lag == 0:
+            vals.append(1)
+            sum += 0
+        else:
+            sum += df(f, W, t, lag)
+            vals.append(df(f, W, t, lag) / sum * lag)
+    return vals
+
+def augmented_detect_pitch_CMNDF(f, W, t, sample_rate, bounds, thresh=0.1):
+    CMNDF_vals = cmndf(f, W, t, bounds[-1])[bounds[0]:]
+    sample = None
+    for i, val in enumerate(CMNDF_vals):
+        if val < thresh:
+            sample = i + bounds[0]
+            break
+    if sample is None:
+        sample = np.argmin(CMNDF_vals) + bounds[0]
+    return sample_rate / (sample + 1)
+
+class PhaseVocoder(object): # Preuzeto od https://github.com/cwoodall/
     def __init__(self, ihop, ohop):
         self.input_hop = int(ihop)
         self.output_hop = int(ohop)
@@ -95,15 +129,29 @@ class MainWindow():
         
         self.fileName = QFileDialog.getOpenFileName(None,"Open Image", "./", "Audio Files (*.wav)")[0]
         self.fs,self.x = read(self.fileName)
-        winSize = 4410
+        winSize = 8820
+        bounds = [20,2000]
 
-        for i in range(0,len(self.x), winSize):
-            self.basePitch.append(self.calculatePitch(i,i+winSize))
 
+        for i in range(2,10,2):
+            self.changePitch(i*4410*10,(i+2)*4410*10,2**(i/12))
+
+        self.xf = self.x.astype(np.float64)
+        for i in tqdm(range(len(self.xf) // (winSize + 2))):
+            self.basePitch.append(
+                augmented_detect_pitch_CMNDF(
+                    self.xf,
+                    winSize,
+                    i * winSize,
+                    self.fs,
+                    bounds
+                )
+            )
+        self.basePitch = np.array(self.basePitch) / 1.05
         plt.plot(range(len(self.basePitch)),self.basePitch)
         plt.show()
+
         
-        self.changePitch(0, 4410*100, 2**(8/12))
 
     def closeFile(self):
         self.fileName = ""
@@ -112,20 +160,23 @@ class MainWindow():
         self.audiosamples = []
         self.playing = True
         self.play()
+        self.basePitch = []
 
     def exportFile(self):
         write("output.wav",self.fs,self.x)
 
     def changePitch(self,startpoint,endpoint,val):
-        signal = self.x[startpoint:endpoint]
+        padding = 0
+        # print((startpoint,endpoint))
+        signal = self.x[startpoint-padding:endpoint+padding]
         chunk = 4410
         overlap = 0.9
         hopin = int(chunk*(1-overlap))
         hopout = int(hopin*val)
         
-        window = windows.hann(chunk)
+        window = windows.hann(chunk+2*padding)
         F = []
-        for i in range(0,(endpoint-startpoint)-chunk,hopin):
+        for i in range(0,len(signal)-chunk,hopin):
             F.append(fft(window*signal[i:i+chunk])/np.sqrt(((float(chunk)/float(hopin))/2.0)))
 
         self.vocoder.input_hop = int(hopin)
@@ -138,24 +189,8 @@ class MainWindow():
         for i in range(0,len(signal)-chunk,hopout):
             signal[i:i+chunk] += window*np.real(window*ifft(F[cnt]))
             cnt +=1
-        #print(len(signal))
-        resampled = resample(signal, endpoint-startpoint)
-        self.x[startpoint:endpoint] = resampled
-
-    def calculatePitch(self,startpoint,endpoint):
-        window = windows.hann(len(self.x[startpoint:endpoint]))
-        f = rfft(self.x[startpoint:endpoint])
-        xf = rfftfreq(len(f),1/(self.fs/2))
-
-        for i in range(50):
-            f[i] = 0+0j
-        return (np.argmax(np.abs(f)))
-
-        # plt.plot(xf,np.abs(ff))
-        # plt.ylim(top=10e6)
-        # plt.show()
-        # plt.figure()
-
+        resampled = resample(signal, endpoint-startpoint+2*padding)
+        self.x[startpoint:endpoint] = resampled[padding:len(resampled) - padding]
 # Main function
 if __name__ == "__main__":
     app = QApplication(sys.argv)

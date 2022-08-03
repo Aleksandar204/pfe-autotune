@@ -1,8 +1,11 @@
 import sys
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtWidgets import QApplication,QFileDialog,QMessageBox,QProgressDialog,QWidget,QVBoxLayout
+from PySide2.QtWidgets import QApplication,QFileDialog,QMessageBox,QProgressDialog,QWidget,QVBoxLayout,QSlider
 from PySide2.QtCore import QFile
+import PySide2
 import sounddevice as sd
+import threading
+import time
 
 import numpy as np
 from scipy.io.wavfile import read
@@ -11,6 +14,15 @@ from scipy.fft import *
 from scipy.signal import stft, resample, savgol_filter,windows
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+def findClosest(val, list):
+    m = abs(list[0]-val)
+    ret = 0
+    for i in range(len(list)):
+        if abs(list[i] - val) < m:
+            m =  abs(list[i] - val)
+            ret = i
+    return list[ret]
 
 def complex_polarToCartesian(r, theta):
     return r * np.exp(theta*1j)
@@ -97,6 +109,13 @@ class MainWindow():
         self.win.pushButton.pressed.connect(self.play)
         self.win.menuFile.triggered.connect(self.menuFileEvent)
         self.win.menuHelp.triggered.connect(self.menuAboutEvent)
+        self.win.pushButton_2.pressed.connect(self.snapNotes)
+        self.sliderBars = []
+        self.notes = []
+        base = 55
+        for i in range(60):
+            #print(base * (2 **(i/12)))
+            self.notes.append(base * (2 **(i/12)))
 
     # Qt Slots
     def menuAboutEvent(self):
@@ -110,7 +129,15 @@ class MainWindow():
         if val == 'Close':
             self.closeFile()
         elif val == 'Exit':
+            self.playing = False
             QApplication.quit()
+    def sliderChange(self):
+        print('ree')
+
+    def snapNotes(self):
+        for i in range(len(self.sliderBars)):
+            self.sliderBars[i].setValue(findClosest(self.sliderBars[i].value(), self.notes))
+        
 
 
     # Audio functions connected to UI
@@ -120,50 +147,76 @@ class MainWindow():
             self.win.pushButton.setText("Play")
             sd.stop()
         else:
+            self.x = np.copy(self.orig)
             self.win.pushButton.setText("Pause")
-            
+            for i in range(len(self.sliderBars)-1):
+                self.changePitch(i*self.winSize,(i+1)*self.winSize,self.sliderBars[i].value()/self.basePitch[i])
+            t = threading.Thread(target=self.moveHorizontalSlider)
+            t.start()
             sd.play(self.x,self.fs)
-    
+
+    def moveHorizontalSlider(self):
+        sl = 0
+        while(self.playing):
+            self.win.horizontalSlider.setValue(sl)
+            time.sleep(self.winSize / self.fs)
+            sl +=1
+
     def openFile(self):
         self.closeFile()
         
         self.fileName = QFileDialog.getOpenFileName(None,"Open Image", "./", "Audio Files (*.wav)")[0]
         self.fs,self.x = read(self.fileName)
-        winSize = 8820
+        self.orig = np.copy(self.x)
+
+        self.winSize = 8820
         bounds = [20,2000]
 
-        self.xf = self.x.astype(np.float64)
-        for i in tqdm(range(len(self.xf) // (winSize + 2))):
-            self.basePitch.append(
-                augmented_detect_pitch_CMNDF(
-                    self.xf,
-                    winSize,
-                    i * winSize,
-                    self.fs,
-                    bounds
-                )
-            )
-        self.basePitch = np.array(self.basePitch) / 1.05
-        plt.plot(range(len(self.basePitch)),self.basePitch)
-        plt.show()
+        for i in range(int(len(self.x) / self.winSize)):
+            self.sliderBars.append(QSlider())
+            self.sliderBars[i].setOrientation(PySide2.QtCore.Qt.Orientation.Vertical)
+            self.sliderBars[i].sliderReleased.connect(self.sliderChange)
+            self.sliderBars[i].setMinimum(0)
+            self.sliderBars[i].setMaximum(500)
+            self.win.horizontalLayout.addWidget(self.sliderBars[i])
+        self.win.horizontalSlider.setMaximum(int(len(self.x) / self.winSize)-1)
 
-        for i in range(2,10,2):
-            self.changePitch(i*4410*10,(i+2)*4410*10,2**(i/12)
-        self.basePitch = []
+
         self.xf = self.x.astype(np.float64)
-        for i in tqdm(range(len(self.xf) // (winSize + 2))):
+        for i in tqdm(range(len(self.xf) // (self.winSize + 2))):
             self.basePitch.append(
                 augmented_detect_pitch_CMNDF(
                     self.xf,
-                    winSize,
-                    i * winSize,
+                    self.winSize,
+                    i * self.winSize,
                     self.fs,
                     bounds
                 )
             )
         self.basePitch = np.array(self.basePitch) / 1.05
-        plt.plot(range(len(self.basePitch)),self.basePitch)
-        plt.show()
+        for i in range(len(self.xf) // (self.winSize + 2)):
+            self.sliderBars[i].setValue(self.basePitch[i])
+
+        # plt.plot(range(len(self.basePitch)),self.basePitch)
+        # plt.show()
+
+        
+
+        # self.basePitch = []
+        # self.xf = self.x.astype(np.float64)
+        # for i in tqdm(range(len(self.xf) // (winSize + 2))):
+        #     self.basePitch.append(
+        #         augmented_detect_pitch_CMNDF(
+        #             self.xf,
+        #             winSize,
+        #             i * winSize,
+        #             self.fs,
+        #             bounds
+        #         )
+        #     )
+        # self.basePitch = np.array(self.basePitch) / 1.05
+        # plt.plot(range(len(self.basePitch)),self.basePitch)
+        # plt.show()
 
         
 
@@ -180,11 +233,13 @@ class MainWindow():
         write("output.wav",self.fs,self.x)
 
     def changePitch(self,startpoint,endpoint,val):
-        padding = 1000
+        padding = 0
+        if startpoint < padding:
+            padding = 0
         # print((startpoint,endpoint))
         signal = self.x[startpoint-padding:endpoint+padding]
-        chunk = 4410
-        overlap = 0.9
+        chunk = 882
+        overlap = 0.8
         hopin = int(chunk*(1-overlap))
         hopout = int(hopin*val)
         
@@ -205,6 +260,7 @@ class MainWindow():
             cnt +=1
         resampled = resample(signal, endpoint-startpoint+2*padding)
         self.x[startpoint:endpoint] = resampled[padding:len(resampled) - padding]
+        
 # Main function
 if __name__ == "__main__":
     app = QApplication(sys.argv)

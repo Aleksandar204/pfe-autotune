@@ -15,7 +15,20 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0" colspan="2">
+    <item row="2" column="0">
+     <widget class="QPushButton" name="pushButton">
+      <property name="text">
+       <string>Play</string>
+      </property>
+      <property name="default">
+       <bool>false</bool>
+      </property>
+      <property name="flat">
+       <bool>false</bool>
+      </property>
+     </widget>
+    </item>
+    <item row="0" column="0" colspan="3">
      <widget class="QScrollArea" name="scrollArea">
       <property name="widgetResizable">
        <bool>true</bool>
@@ -58,23 +71,17 @@
       </widget>
      </widget>
     </item>
-    <item row="2" column="1">
+    <item row="2" column="2">
      <widget class="QPushButton" name="pushButton_2">
       <property name="text">
        <string>Align to notes</string>
       </property>
      </widget>
     </item>
-    <item row="2" column="0">
-     <widget class="QPushButton" name="pushButton">
+    <item row="2" column="1">
+     <widget class="QPushButton" name="pushButton_3">
       <property name="text">
-       <string>Play</string>
-      </property>
-      <property name="default">
-       <bool>false</bool>
-      </property>
-      <property name="flat">
-       <bool>false</bool>
+       <string>Calculate</string>
       </property>
      </widget>
     </item>

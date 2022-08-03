@@ -6,7 +6,7 @@ import PySide2
 import sounddevice as sd
 import threading
 import time
-
+import math
 import numpy as np
 from scipy.io.wavfile import read
 from scipy.io.wavfile import write
@@ -83,6 +83,7 @@ class MainWindow():
         self.win.menuFile.triggered.connect(self.menuFileEvent)
         self.win.menuHelp.triggered.connect(self.menuAboutEvent)
         self.win.pushButton_2.pressed.connect(self.snapNotes)
+        self.win.pushButton_3.pressed.connect(self.calcPlay)
         self.sliderBars = []
         self.notes = []
         base = 55
@@ -109,7 +110,8 @@ class MainWindow():
         for i in range(len(self.sliderBars)):
             self.sliderBars[i].setValue(findClosest(self.sliderBars[i].value(), self.notes))
         
-
+    def calcPlay(self):
+        self.changePitch()
 
     # Audio functions connected to UI
     def play(self):
@@ -120,7 +122,7 @@ class MainWindow():
         else:
             self.x = np.copy(self.orig)
             self.win.pushButton.setText("Pause")
-            self.changePitch()
+            # print(len(self.basePitch),len(self.sliderBars))
             t = threading.Thread(target=self.moveHorizontalSlider)
             t.start()
             sd.play(self.x,self.fs)
@@ -142,7 +144,7 @@ class MainWindow():
         self.winSize = 8820
         bounds = [20,2000]
 
-        for i in range(int(len(self.x) / self.winSize)):
+        for i in range(int(len(self.x) / self.winSize)-1):
             self.sliderBars.append(QSlider())
             self.sliderBars[i].setOrientation(PySide2.QtCore.Qt.Orientation.Vertical)
             self.sliderBars[i].setMinimum(0)
@@ -150,9 +152,8 @@ class MainWindow():
             self.win.horizontalLayout.addWidget(self.sliderBars[i])
         self.win.horizontalSlider.setMaximum(int(len(self.x) / self.winSize)-1)
 
-
         self.xf = self.x.astype(np.float64)
-        for i in tqdm(range(len(self.xf) // (self.winSize + 2))):
+        for i in tqdm(range(int(len(self.x) / self.winSize)-1)):
             self.basePitch.append(
                 augmented_detect_pitch_CMNDF(
                     self.xf,
@@ -163,7 +164,7 @@ class MainWindow():
                 )
             )
         self.basePitch = np.array(self.basePitch) / 1.05
-        for i in range(len(self.xf) // (self.winSize + 2)):
+        for i in range(int(len(self.x) / self.winSize)-1):
             self.sliderBars[i].setValue(self.basePitch[i])
 
         # plt.plot(range(len(self.basePitch)),self.basePitch)

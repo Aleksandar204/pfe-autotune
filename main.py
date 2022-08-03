@@ -11,7 +11,7 @@ import numpy as np
 from scipy.io.wavfile import read
 from scipy.io.wavfile import write
 from scipy.fft import *
-from scipy.signal import stft, resample, savgol_filter,windows
+from scipy.signal import stft, resample, savgol_filter,windows,istft
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -63,32 +63,6 @@ def augmented_detect_pitch_CMNDF(f, W, t, sample_rate, bounds, thresh=0.1):
         sample = np.argmin(CMNDF_vals) + bounds[0]
     return sample_rate / (sample + 1)
 
-class PhaseVocoder(object): # Preuzeto od https://github.com/cwoodall/
-    def __init__(self, ihop, ohop):
-        self.input_hop = int(ihop)
-        self.output_hop = int(ohop)
-        self.last_phase = 0
-        self.phase_accumulator = 0
-
-    def sendFrame(self, frame):
-        omega_bins = 2*np.pi*np.arange(len(frame))/len(frame)
-        magnitude, phase = complex_cartesianToPolar(frame)
-
-        delta_phase = phase - self.last_phase
-        self.last_phase = phase
-
-        delta_phase_unwrapped =  delta_phase - self.input_hop * omega_bins
-        delta_phase_rewrapped = np.mod(delta_phase_unwrapped + np.pi, 2*np.pi) - np.pi
-        
-        true_freq = omega_bins + delta_phase_rewrapped/self.input_hop
-        
-        self.phase_accumulator += self.output_hop * true_freq
-        
-        return complex_polarToCartesian(magnitude, self.phase_accumulator)
-
-    def sendFrames(self, frames):
-        for frame in frames:
-            yield self.sendFrame(frame)
 
 class MainWindow():
     fileName = ""
@@ -98,7 +72,6 @@ class MainWindow():
     x = None
 
     basePitch = []
-    vocoder = PhaseVocoder(0,0)
     # Class init
     def __init__(self):
         ui_file_name = "ui_files/mainwindow.ui"
@@ -131,8 +104,6 @@ class MainWindow():
         elif val == 'Exit':
             self.playing = False
             QApplication.quit()
-    def sliderChange(self):
-        print('ree')
 
     def snapNotes(self):
         for i in range(len(self.sliderBars)):
@@ -149,8 +120,7 @@ class MainWindow():
         else:
             self.x = np.copy(self.orig)
             self.win.pushButton.setText("Pause")
-            for i in range(len(self.sliderBars)-1):
-                self.changePitch(i*self.winSize,(i+1)*self.winSize,self.sliderBars[i].value()/self.basePitch[i])
+            self.changePitch()
             t = threading.Thread(target=self.moveHorizontalSlider)
             t.start()
             sd.play(self.x,self.fs)
@@ -175,7 +145,6 @@ class MainWindow():
         for i in range(int(len(self.x) / self.winSize)):
             self.sliderBars.append(QSlider())
             self.sliderBars[i].setOrientation(PySide2.QtCore.Qt.Orientation.Vertical)
-            self.sliderBars[i].sliderReleased.connect(self.sliderChange)
             self.sliderBars[i].setMinimum(0)
             self.sliderBars[i].setMaximum(500)
             self.win.horizontalLayout.addWidget(self.sliderBars[i])
@@ -232,35 +201,30 @@ class MainWindow():
     def exportFile(self):
         write("output.wav",self.fs,self.x)
 
-    def changePitch(self,startpoint,endpoint,val):
-        padding = 0
-        if startpoint < padding:
-            padding = 0
-        # print((startpoint,endpoint))
-        signal = self.x[startpoint-padding:endpoint+padding]
-        chunk = 882
-        overlap = 0.8
-        hopin = int(chunk*(1-overlap))
-        hopout = int(hopin*val)
-        
-        window = windows.hann(chunk)
-        F = []
-        for i in range(0,len(signal)-chunk,hopin):
-            F.append(fft(window*signal[i:i+chunk])/np.sqrt(((float(chunk)/float(hopin))/2.0)))
+    def changePitch(self):
+        f,t,Zxx = stft(self.x *0.5,self.fs,nperseg=4096,noverlap=3072)
+        Zxxc = np.copy(Zxx)
+        for i in range(Zxx.shape[1]):
+            for j in range(Zxx.shape[0]):
+                if int(j/self.getVal(i,Zxx.shape[0],t)) < Zxx.shape[0]:
+                    Zxxc[j][i] = Zxx[int(j/self.getVal(i,Zxx.shape[0],t))][i]
 
-        self.vocoder.input_hop = int(hopin)
-        self.vocoder.output_hop = int(hopout)
-        adjusted = F
-        adjusted = [frame for frame in self.vocoder.sendFrames(F)]
-        F = adjusted
-        cnt = 0
-        signal = np.zeros(len(F)*hopout)
-        for i in range(0,len(signal)-chunk,hopout):
-            signal[i:i+chunk] += window*np.real(window*ifft(F[cnt]))
-            cnt +=1
-        resampled = resample(signal, endpoint-startpoint+2*padding)
-        self.x[startpoint:endpoint] = resampled[padding:len(resampled) - padding]
+        self.x[0:] = resample(istft(Zxxc,self.fs,nperseg=4096,noverlap=3072)[1], len(self.x))
         
+    def getVal(self,sl,length,t):
+        value = 1
+        tstart = t[sl]
+        tuk = len(self.x)/self.fs
+        perc = tstart/tuk
+        i = int(perc*len(self.sliderBars))
+        if i >= len(self.sliderBars):
+            i = len(self.sliderBars)-1
+        value = self.sliderBars[i].value()/self.basePitch[i]
+
+        # print(value)
+        return value
+
+
 # Main function
 if __name__ == "__main__":
     app = QApplication(sys.argv)

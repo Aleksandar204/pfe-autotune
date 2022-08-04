@@ -1,75 +1,23 @@
 import sys
-from PySide2.QtUiTools import QUiLoader
-from PySide2.QtWidgets import QApplication,QFileDialog,QMessageBox,QProgressDialog,QWidget,QVBoxLayout,QSlider
-from PySide2.QtCore import QFile
-import PySide2
-import sounddevice as sd
 import threading
 import time
-import math
-import numpy as np
-from scipy.io.wavfile import read
-from scipy.io.wavfile import write
-from scipy.fft import *
-from scipy.signal import stft, resample, savgol_filter,windows,istft
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 
-def findClosest(val, list):
-    m = abs(list[0]-val)
-    ret = 0
-    for i in range(len(list)):
-        if abs(list[i] - val) < m:
-            m =  abs(list[i] - val)
-            ret = i
-    return list[ret]
+from PySide2.QtUiTools import QUiLoader
+from PySide2.QtWidgets import QApplication,QFileDialog,QMessageBox,QProgressDialog,QWidget,QVBoxLayout,QSlider
+from PySide2.QtCore import QFile,QCoreApplication,Qt
+import PySide2
 
-def complex_polarToCartesian(r, theta):
-    return r * np.exp(theta*1j)
+import sounddevice as sd
+from scipy.io.wavfile import read,write
 
-def complex_cartesianToPolar(x):
-    return (np.abs(x), np.angle(x))
-
-
-def autocorrel(f, W, t, lag):    
-    return np.sum(
-        f[t : t + W] *
-        f[lag + t : lag + t + W]
-    )
-
-def df(f, W, t, lag):
-    return autocorrel(f, W, t, 0)+ autocorrel(f, W, t + lag, 0)- (2 * autocorrel(f, W, t, lag))
-
-def cmndf(f, W, t, lag_max):
-    sum = 0
-    vals = []
-    for lag in range(0, lag_max):
-        if lag == 0:
-            vals.append(1)
-            sum += 0
-        else:
-            sum += df(f, W, t, lag)
-            vals.append(df(f, W, t, lag) / sum * lag)
-    return vals
-
-def augmented_detect_pitch_CMNDF(f, W, t, sample_rate, bounds, thresh=0.1):
-    CMNDF_vals = cmndf(f, W, t, bounds[-1])[bounds[0]:]
-    sample = None
-    for i, val in enumerate(CMNDF_vals):
-        if val < thresh:
-            sample = i + bounds[0]
-            break
-    if sample is None:
-        sample = np.argmin(CMNDF_vals) + bounds[0]
-    return sample_rate / (sample + 1)
-
+import pitch
 
 class MainWindow():
     fileName = ""
     playing = False
-    stream = None
     fs = 0
     x = None
+    notes = []
 
     basePitch = []
     # Class init
@@ -84,13 +32,11 @@ class MainWindow():
         self.win.menuHelp.triggered.connect(self.menuAboutEvent)
         self.win.pushButton_2.pressed.connect(self.snapNotes)
         self.win.pushButton_3.pressed.connect(self.calcPlay)
+        self.win.horizontalSlider.hide()
         self.sliderBars = []
-        self.notes = []
-        base = 55
-        for i in range(60):
-            #print(base * (2 **(i/12)))
-            self.notes.append(base * (2 **(i/12)))
-
+        self.notes = pitch.calculateNotes()
+        
+    
     # Qt Slots
     def menuAboutEvent(self):
         QMessageBox.about(None,"PFE Autotune","Napravio Aleksandar Rašković za vreme prolećne online PFE radionice")
@@ -107,20 +53,43 @@ class MainWindow():
             QApplication.quit()
 
     def snapNotes(self):
+        if self.fileName == "":
+            msgBox = QMessageBox()
+            msgBox.setText("No file opened!")
+            msgBox.setIcon(QMessageBox.Warning)
+            msgBox.exec_()
+            return
         for i in range(len(self.sliderBars)):
-            self.sliderBars[i].setValue(findClosest(self.sliderBars[i].value(), self.notes))
+            self.sliderBars[i].setValue(pitch.findClosest(self.sliderBars[i].value(), self.notes))
         
     def calcPlay(self):
-        self.changePitch()
+        if self.fileName == "":
+            msgBox = QMessageBox()
+            msgBox.setText("No file opened!")
+            msgBox.setIcon(QMessageBox.Warning)
+            msgBox.exec_()
+            return
+        self.x = pitch.copy(self.orig)
+        self.x[0:] = pitch.changePitch(self.x,self.fs,self.basePitch,self.sliderBars)
+
+    def closeEvent(self):
+        self.playing = False
 
     # Audio functions connected to UI
     def play(self):
-        self.playing = not self.playing
-        if not self.playing:
+        
+        if self.playing:
+            self.playing = not self.playing
             self.win.pushButton.setText("Play")
             sd.stop()
         else:
-            self.x = np.copy(self.orig)
+            if self.fileName == "":
+                msgBox = QMessageBox()
+                msgBox.setText("No file opened!")
+                msgBox.setIcon(QMessageBox.Warning)
+                msgBox.exec_()
+                return
+            self.playing = not self.playing
             self.win.pushButton.setText("Pause")
             # print(len(self.basePitch),len(self.sliderBars))
             t = threading.Thread(target=self.moveHorizontalSlider)
@@ -138,99 +107,53 @@ class MainWindow():
         self.closeFile()
         
         self.fileName = QFileDialog.getOpenFileName(None,"Open Image", "./", "Audio Files (*.wav)")[0]
+        if self.fileName == "":
+            msgBox = QMessageBox()
+            msgBox.setText("Canceled file open.")
+            msgBox.setIcon(QMessageBox.Information)
+            msgBox.exec_()
+            return
         self.fs,self.x = read(self.fileName)
-        self.orig = np.copy(self.x)
-
+        self.orig = pitch.copy(self.x)
+        self.win.horizontalSlider.show()
         self.winSize = 8820
-        bounds = [20,2000]
+        self.basePitch = pitch.calculatePitch(self.x, self.fs, self.winSize)
 
         for i in range(int(len(self.x) / self.winSize)-1):
             self.sliderBars.append(QSlider())
             self.sliderBars[i].setOrientation(PySide2.QtCore.Qt.Orientation.Vertical)
-            self.sliderBars[i].setMinimum(0)
+            self.sliderBars[i].setMinimum(20)
             self.sliderBars[i].setMaximum(500)
             self.win.horizontalLayout.addWidget(self.sliderBars[i])
         self.win.horizontalSlider.setMaximum(int(len(self.x) / self.winSize)-1)
 
-        self.xf = self.x.astype(np.float64)
-        for i in tqdm(range(int(len(self.x) / self.winSize)-1)):
-            self.basePitch.append(
-                augmented_detect_pitch_CMNDF(
-                    self.xf,
-                    self.winSize,
-                    i * self.winSize,
-                    self.fs,
-                    bounds
-                )
-            )
-        self.basePitch = np.array(self.basePitch) / 1.05
+        
         for i in range(int(len(self.x) / self.winSize)-1):
             self.sliderBars[i].setValue(self.basePitch[i])
-
-        # plt.plot(range(len(self.basePitch)),self.basePitch)
-        # plt.show()
-
-        
-
-        # self.basePitch = []
-        # self.xf = self.x.astype(np.float64)
-        # for i in tqdm(range(len(self.xf) // (winSize + 2))):
-        #     self.basePitch.append(
-        #         augmented_detect_pitch_CMNDF(
-        #             self.xf,
-        #             winSize,
-        #             i * winSize,
-        #             self.fs,
-        #             bounds
-        #         )
-        #     )
-        # self.basePitch = np.array(self.basePitch) / 1.05
-        # plt.plot(range(len(self.basePitch)),self.basePitch)
-        # plt.show()
-
-        
 
     def closeFile(self):
         self.fileName = ""
         self.fs = 0
         self.x = None
-        self.audiosamples = []
         self.playing = True
         self.play()
         self.basePitch = []
+        self.win.horizontalSlider.hide()
+        for i in reversed(range(1,self.win.horizontalLayout.count())):
+            self.win.horizontalLayout.itemAt(i).widget().setParent(None)
+        self.sliderBars = []
 
     def exportFile(self):
         write("output.wav",self.fs,self.x)
 
-    def changePitch(self):
-        f,t,Zxx = stft(self.x *0.5,self.fs,nperseg=4096,noverlap=3072)
-        Zxxc = np.copy(Zxx)
-        for i in range(Zxx.shape[1]):
-            for j in range(Zxx.shape[0]):
-                if int(j/self.getVal(i,Zxx.shape[0],t)) < Zxx.shape[0]:
-                    Zxxc[j][i] = Zxx[int(j/self.getVal(i,Zxx.shape[0],t))][i]
-
-        self.x[0:] = resample(istft(Zxxc,self.fs,nperseg=4096,noverlap=3072)[1], len(self.x))
-        
-    def getVal(self,sl,length,t):
-        value = 1
-        tstart = t[sl]
-        tuk = len(self.x)/self.fs
-        perc = tstart/tuk
-        i = int(perc*len(self.sliderBars))
-        if i >= len(self.sliderBars):
-            i = len(self.sliderBars)-1
-        value = self.sliderBars[i].value()/self.basePitch[i]
-
-        # print(value)
-        return value
-
 
 # Main function
 if __name__ == "__main__":
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+
     app = QApplication(sys.argv)
 
     mw = MainWindow()
     mw.win.show()
-
+    app.aboutToQuit.connect(mw.closeEvent)
     sys.exit(app.exec_())

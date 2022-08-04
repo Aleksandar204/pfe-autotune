@@ -5,7 +5,6 @@ import time
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtWidgets import QApplication,QFileDialog,QMessageBox,QProgressDialog,QWidget,QVBoxLayout,QSlider
 from PySide2.QtCore import QFile,QCoreApplication,Qt
-import PySide2
 
 import sounddevice as sd
 from scipy.io.wavfile import read,write
@@ -99,6 +98,8 @@ class MainWindow():
     def moveHorizontalSlider(self):
         sl = 0
         while(self.playing):
+            if sl == self.win.horizontalSlider.maximum():
+                self.play()
             self.win.horizontalSlider.setValue(sl)
             time.sleep(self.winSize / self.fs)
             sl +=1
@@ -121,7 +122,7 @@ class MainWindow():
 
         for i in range(int(len(self.x) / self.winSize)-1):
             self.sliderBars.append(QSlider())
-            self.sliderBars[i].setOrientation(PySide2.QtCore.Qt.Orientation.Vertical)
+            self.sliderBars[i].setOrientation(Qt.Orientation.Vertical)
             self.sliderBars[i].setMinimum(20)
             self.sliderBars[i].setMaximum(500)
             self.win.horizontalLayout.addWidget(self.sliderBars[i])
